@@ -289,7 +289,7 @@ class GeminiImageGenerator(Star):
 
     async def _edit_image_manually(self, prompt, image_path, api_key):
         """使用异步请求编辑图片"""
-        model_name = "gemini-2.0-flash-preview-image-generation"
+        model_name = "gemini-2.5-flash-image"
 
         # 修正API地址格式
         base_url = self.api_base_url.strip()
@@ -371,7 +371,7 @@ class GeminiImageGenerator(Star):
 
     async def _generate_image_manually(self, prompt, api_key):
         """使用异步请求生成图片（替换同步请求）"""
-        model_name = "gemini-2.0-flash-preview-image-generation"
+        model_name = "gemini-2.5-flash-image"
 
         base_url = self.api_base_url.strip()
         if not base_url.startswith("https://"):
