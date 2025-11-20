@@ -1,7 +1,7 @@
 import base64
 import os
 import uuid
-import requests
+import httpx
 
 import astrbot.api.message_components as Comp
 from astrbot.api import AstrBotConfig, logger
@@ -10,14 +10,14 @@ from astrbot.api.message_components import Image
 from astrbot.api.star import Context, Star, register
 
 
-@register("AstrBot_Plugins_Canvas", "stevessr", "nano banana", "1.0.0")
+@register("AstrBot_Plugins_Canvas", "stevessr", "一个普通的使用 gemini-2.5-flash-image 进行图片内容创作的插件", "v1.1")
 class GeminiImageGenerator(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         """Gemini 图片生成与编辑插件初始化"""
         super().__init__(context)
         self.config = config
 
-        logger.info(f"插件配置加载成功: {self.config}")
+        logger.info(f"插件配置加载成功：{self.config}")
 
         # 读取多密钥配置
         self.api_keys = self.config.get("gemini_api_keys", [])
@@ -28,7 +28,7 @@ class GeminiImageGenerator(Star):
         self.save_dir = os.path.join(plugin_dir, "temp_images")
         if not os.path.exists(self.save_dir):
             os.makedirs(self.save_dir)
-            logger.info(f"已创建图片临时目录: {self.save_dir}")
+            logger.info(f"已创建图片临时目录：{self.save_dir}")
 
         # 初始化配置
         self.api_base_url = self.config.get(
@@ -68,11 +68,11 @@ class GeminiImageGenerator(Star):
 
         try:
             yield event.plain_result("正在生成图片，请稍等...")
-            image_data = self._generate_image_with_retry(prompt)
+            image_data = await self._generate_image_with_retry(prompt)
 
             if not image_data:
-                logger.error("生成失败：所有API密钥均尝试完毕")
-                yield event.plain_result("生成失败：所有API密钥均尝试失败")
+                logger.error("生成失败：所有 API 密钥均尝试完毕")
+                yield event.plain_result("生成失败：所有 API 密钥均尝试失败")
                 return
 
             # 保存图片
@@ -82,23 +82,23 @@ class GeminiImageGenerator(Star):
             with open(save_path, "wb") as f:
                 f.write(image_data)
 
-            logger.info(f"图片已保存至: {save_path}")
+            logger.info(f"图片已保存至：{save_path}")
 
             # 发送图片
             yield event.chain_result([Image.fromFileSystem(save_path)])
-            logger.info(f"图片发送成功，提示词: {prompt}")
+            logger.info(f"图片发送成功，提示词：{prompt}")
 
         except Exception as e:
-            logger.error(f"图片处理失败: {str(e)}")
-            yield event.plain_result(f"生成失败: {str(e)}")
+            logger.error(f"图片处理失败：{str(e)}")
+            yield event.plain_result(f"生成失败：{str(e)}")
 
         finally:
             if save_path and os.path.exists(save_path):
                 try:
                     os.remove(save_path)
-                    logger.info(f"已删除临时图片: {save_path}")
+                    logger.info(f"已删除临时图片：{save_path}")
                 except Exception as e:
-                    logger.warning(f"删除临时图片失败: {str(e)}")
+                    logger.warning(f"删除临时图片失败：{str(e)}")
 
     @filter.command("gemini_edit", alias={"图编辑"})
     async def edit_image(self, event: AstrMessageEvent, prompt: str):
@@ -168,7 +168,7 @@ class GeminiImageGenerator(Star):
                 logger.warning("未检测到回复组件（用户未长按图片回复）")
                 return None
 
-            # 从回复的chain中提取Image组件
+            # 从回复的 chain 中提取 Image 组件
             image_component = None
             for quoted_comp in reply_component.chain:
                 if isinstance(quoted_comp, Comp.Image):
@@ -188,7 +188,7 @@ class GeminiImageGenerator(Star):
             return image_path
 
         except Exception as e:
-            logger.error(f"提取图片失败: {str(e)}", exc_info=True)
+            logger.error(f"提取图片失败：{str(e)}", exc_info=True)
             return None
 
     # 统一的图片编辑处理逻辑
@@ -201,10 +201,10 @@ class GeminiImageGenerator(Star):
             yield event.plain_result("正在编辑图片，请稍等...")
 
             # 调用带重试的编辑方法
-            image_data = self._edit_image_with_retry(prompt, image_path)
+            image_data = await self._edit_image_with_retry(prompt, image_path)
 
             if not image_data:
-                yield event.plain_result("编辑失败：所有API密钥均尝试失败")
+                yield event.plain_result("编辑失败：所有 API 密钥均尝试失败")
                 return
 
             # 保存并发送编辑后的图片
@@ -213,7 +213,7 @@ class GeminiImageGenerator(Star):
                 f.write(image_data)
 
             yield event.chain_result([Comp.Image.fromFileSystem(save_path)])
-            logger.info(f"图片编辑完成并发送，提示词: {prompt}")
+            logger.info(f"图片编辑完成并发送，提示词：{prompt}")
 
         except Exception as e:
             logger.error(f"图片编辑出错：{str(e)}")
@@ -235,63 +235,63 @@ class GeminiImageGenerator(Star):
                 except Exception as e:
                     logger.warning(f"删除编辑图失败：{str(e)}")
 
-    def _edit_image_with_retry(self, prompt, image_path):
+    async def _retry_with_fallback_keys(self, operation_name: str, operation_func, *args, **kwargs):
+        """通用的 API 密钥重试逻辑
+
+        Args:
+            operation_name: 操作名称（用于日志）
+            operation_func: 要执行的操作函数（异步函数）
+            *args, **kwargs: 传递给操作函数的参数
+
+        Returns:
+            操作成功时返回函数结果，失败时返回 None
+        """
+        max_attempts = len(self.api_keys)
+        attempts = 0
+
+        while attempts < max_attempts:
+            current_key = self._get_current_api_key()
+            if not current_key:
+                break
+
+            logger.info(
+                f"尝试{operation_name}（密钥索引：{self.current_key_index}，尝试次数：{attempts + 1}/{max_attempts}）"
+            )
+
+            try:
+                return await operation_func(current_key, *args, **kwargs)
+            except Exception as e:
+                attempts += 1
+                logger.error(f"第{attempts}次尝试失败：{str(e)}")
+                if attempts < max_attempts:
+                    self._switch_next_api_key()
+                else:
+                    logger.error("所有 API 密钥均尝试失败")
+
+        return None
+
+    async def _edit_image_with_retry(self, prompt, image_path):
         """带重试逻辑的图片编辑方法"""
-        max_attempts = len(self.api_keys)
-        attempts = 0
+        return await self._retry_with_fallback_keys(
+            "编辑图片",
+            self._edit_image_manually,
+            prompt,
+            image_path
+        )
 
-        while attempts < max_attempts:
-            current_key = self._get_current_api_key()
-            if not current_key:
-                break
-
-            logger.info(
-                f"尝试编辑图片（密钥索引：{self.current_key_index}，尝试次数：{attempts + 1}/{max_attempts}）"
-            )
-
-            try:
-                return self._edit_image_manually(prompt, image_path, current_key)
-            except Exception as e:
-                attempts += 1
-                logger.error(f"第{attempts}次尝试失败：{str(e)}")
-                if attempts < max_attempts:
-                    self._switch_next_api_key()
-                else:
-                    logger.error("所有API密钥均尝试失败")
-
-        return None
-
-    def _generate_image_with_retry(self, prompt):
+    async def _generate_image_with_retry(self, prompt):
         """带重试逻辑的图片生成方法"""
-        max_attempts = len(self.api_keys)
-        attempts = 0
+        return await self._retry_with_fallback_keys(
+            "生成图片",
+            self._generate_image_manually,
+            prompt
+        )
 
-        while attempts < max_attempts:
-            current_key = self._get_current_api_key()
-            if not current_key:
-                break
-
-            logger.info(
-                f"尝试生成图片（密钥索引：{self.current_key_index}，尝试次数：{attempts + 1}/{max_attempts}）"
-            )
-
-            try:
-                return self._generate_image_manually(prompt, current_key)
-            except Exception as e:
-                attempts += 1
-                logger.error(f"第{attempts}次尝试失败：{str(e)}")
-                if attempts < max_attempts:
-                    self._switch_next_api_key()
-                else:
-                    logger.error("所有API密钥均尝试失败")
-
-        return None
-
-    def _edit_image_manually(self, prompt, image_path, api_key):
-        """使用 requests 编辑图片"""
+    async def _edit_image_manually(self, prompt, image_path, api_key):
+        """使用 httpx 异步编辑图片"""
         model_name = "gemini-2.5-flash-image"
 
-        # 修正API地址格式
+        # 修正 API 地址格式
         base_url = self.api_base_url.strip()
         if not (base_url.startswith("https://") or base_url.startswith("http://")):
             base_url = f"https://{base_url}"
@@ -303,7 +303,7 @@ class GeminiImageGenerator(Star):
 
         headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
 
-        # 读取图片并转换为Base64
+        # 读取图片并转换为 Base64
         with open(image_path, "rb") as f:
             image_bytes = f.read()
             image_base64 = (
@@ -337,16 +337,18 @@ class GeminiImageGenerator(Star):
             },
         }
 
-        # 发送请求
-        response = requests.post(url=endpoint, json=payload, headers=headers)
+        # 发送异步请求
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url=endpoint, json=payload, headers=headers)
+
         if response.status_code != 200:
             logger.error(
-                f"API编辑请求失败: HTTP {response.status_code}, 响应: {response.text}"
+                f"API 编辑请求失败：HTTP {response.status_code}, 响应：{response.text}"
             )
             response.raise_for_status()
 
         data = response.json()
-        # logger.info(f"API响应数据: {data}") 太tm大了
+        # logger.info(f"API 响应数据：{data}") 太 tm 大了
 
         # 解析图片数据（兼容 Gemini 原生和 OpenAI 风格响应）
         image_data = self._extract_image_from_gemini_response(data)
@@ -357,8 +359,8 @@ class GeminiImageGenerator(Star):
             raise Exception("编辑图片成功，但未获取到图片数据")
         return image_data
 
-    def _generate_image_manually(self, prompt, api_key):
-        """使用 requests 生成图片"""
+    async def _generate_image_manually(self, prompt, api_key):
+        """使用 httpx 异步生成图片"""
         model_name = "gemini-2.5-flash-image"
 
         base_url = self.api_base_url.strip()
@@ -384,15 +386,17 @@ class GeminiImageGenerator(Star):
             },
         }
 
-        response = requests.post(url=endpoint, json=payload, headers=headers)
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url=endpoint, json=payload, headers=headers)
+
         if response.status_code != 200:
             logger.error(
-                f"API生成请求失败: HTTP {response.status_code}, 响应: {response.text}"
+                f"API 生成请求失败：HTTP {response.status_code}, 响应：{response.text}"
             )
             response.raise_for_status()
 
         data = response.json()
-        logger.info(f"API响应数据: {data}")
+        logger.info(f"API 响应数据：{data}")
 
         # 解析图片数据（兼容 Gemini 原生和 OpenAI 风格响应）
         image_data = self._extract_image_from_gemini_response(data)
@@ -489,5 +493,5 @@ class GeminiImageGenerator(Star):
                 os.rmdir(self.save_dir)
                 logger.info(f"插件卸载：已清理临时目录 {self.save_dir}")
             except Exception as e:
-                logger.warning(f"清理临时目录失败: {str(e)}")
+                logger.warning(f"清理临时目录失败：{str(e)}")
         logger.info("Gemini 文生图插件已停用")
