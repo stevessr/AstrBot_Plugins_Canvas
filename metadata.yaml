@@ -1,5 +1,5 @@
 name: astrbot_plugin_canvas_steve # 这是你的插件的唯一识别名。
-desc: 一个普通的使用gemini-2.5-flash-image进行图片内容创作的插件\n看到https://github.com/zgojin/AstrBot_Plugins_Canvas 但是不动了，就改了一下，硬编码到gemini 2.5 flash image（什么？你问key,你都玩这个了，自己2api也不是不行） # 插件简短描述
+desc: 一个普通的使用gemini-2.5-flash-image进行图片内容创作的插件\n看到https://github.com/zgojin/AstrBot_Plugins_Canvas 但是不动了，就改了一下，硬编码到gemini 2.5 flash image（什么？你问key,你都玩这个了，自己2api也不是不行）
 version: v1.1 # 插件版本号。格式：v1.1.1 或者 v1.1
 author: stevessr # 作者
 repo: https://github.com/stevessr/AstrBot_Plugins_Canvas/ # 插件的仓库地址
